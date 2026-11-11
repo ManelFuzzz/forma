@@ -287,9 +287,6 @@ details .dbody li:last-child{margin-bottom:0}
 .brand{font-size:12px;letter-spacing:.28em;color:var(--accent);font-weight:700;text-transform:uppercase}
 .auth h2{font-size:30px;line-height:1.08;letter-spacing:-.035em;margin:14px 0 8px;font-weight:600}
 .auth p.lead{font-size:13.5px;line-height:1.55;color:var(--muted);margin:0 0 24px}
-.seg{display:flex;gap:4px;background:rgba(255,255,255,.05);border:1px solid var(--line);border-radius:14px;padding:4px;margin-bottom:14px}
-.seg-btn{flex:1;height:40px;border:0;border-radius:11px;background:none;color:#8E959D;font:inherit;font-size:13.5px;font-weight:600;cursor:pointer;transition:.2s}
-.seg-btn.on{background:rgba(205,255,77,.14);color:var(--accent)}
 .auth .inp{margin-bottom:8px}
 .aerr{min-height:18px;font-size:12px;color:#FF8A8A;margin:2px 2px 10px}
 .alogout{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 0}
@@ -414,19 +411,14 @@ details .dbody li:last-child{margin-bottom:0}
 <div class="auth" id="auth">
   <div class="auth-in">
     <div class="brand">Форма</div>
-    <h2 id="authTitle">Твой прогресс</h2>
-    <p class="lead" id="authLead">Войди, чтобы тренировки, веса и питание сохранялись под твоим логином.</p>
-    <div class="seg">
-      <button class="seg-btn on" data-act="auth-mode" data-mode="login">Вход</button>
-      <button class="seg-btn" data-act="auth-mode" data-mode="reg">Регистрация</button>
-    </div>
+    <h2 id="authTitle">Вход</h2>
+    <p class="lead" id="authLead">Введи логин — тренировки, веса и питание подтянутся из облака.</p>
     <input class="inp" id="aLogin" placeholder="Логин" autocapitalize="none" autocorrect="off" autocomplete="username" spellcheck="false">
-    <input class="inp" id="aPass" type="password" placeholder="Пароль" autocomplete="current-password" style="margin-top:8px">
     <div class="aerr" id="aErr"></div>
     <button class="btn btn-lime" data-act="auth-submit" id="authBtn">Войти</button>
     <p class="small muted" style="margin-top:16px;text-align:center;line-height:1.55">
-      Аккаунт хранится в этом браузере. Вход запоминается — второй раз логиниться не нужно.<br>
-      Чтобы данные не стирались, поставь сайт на главный экран iPhone.
+      Вход запоминается — второй раз логиниться не нужно.<br>
+      Прогресс хранится в облаке и на этом устройстве.
     </p>
   </div>
 </div>
@@ -1008,7 +1000,7 @@ function defaultState(){
     tab:'training',
     settings:{weekdayTime:'19:00', weekendTime:'11:00', sound:true, diagrams:true, remind:true},
     targets:{...DEFAULT_TARGETS},
-    days:{}, sessions:[], weights:{}
+    days:{}, sessions:[], weights:{}, rev:0
   };
 }
 
@@ -1103,28 +1095,138 @@ function setAcct(login, rec){
 function loadStateFor(login){
   try{ return normalize(JSON.parse(lsGet(userKey(login)) || 'null')); }catch(e){ return defaultState(); }
 }
-function save(){
+function saveLocal(){
   if(!currentUser) return;
+  state.rev = Date.now();
   lsSet(userKey(currentUser), JSON.stringify(state));
 }
-async function pwHash(pw, salt){
-  const str = salt + '|' + pw;
-  try{
-    if(window.crypto && crypto.subtle && crypto.subtle.digest){
-      const buf = new TextEncoder().encode(str);
-      const dig = await crypto.subtle.digest('SHA-256', buf);
-      return Array.from(new Uint8Array(dig)).map(b=>b.toString(16).padStart(2,'0')).join('');
-    }
-  }catch(e){}
-  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
-  for(let i=0;i<str.length;i++){
-    const ch = str.charCodeAt(i);
-    h1 = Math.imul(h1 ^ ch, 2654435761);
-    h2 = Math.imul(h2 ^ ch, 1597334677);
+function save(){
+  if(!currentUser) return;
+  saveLocal();
+  queueCloudSync();
+}
+
+/* ============================================================
+   ОБЛАКО — Supabase
+   Один логин, один прогресс: при входе состояние подтягивается,
+   после каждого изменения — сохраняется обратно.
+   ============================================================ */
+const CLOUD = {
+  url: '',      // https://<project>.supabase.co
+  key: '',      // publishable / anon key
+  table: 'progress',
+  login: 'vargonik'
+};
+const CLOUD_ON = () => !!(CLOUD.url && CLOUD.key);
+let cloudTimer = null, cloudBusy = false, cloudState = 'off', cloudAt = 0;
+
+function cloudHeaders(extra){
+  return {apikey: CLOUD.key, Authorization: 'Bearer ' + CLOUD.key, 'Content-Type': 'application/json', ...(extra||{})};
+}
+async function cloudGet(){
+  const url = CLOUD.url + '/rest/v1/' + CLOUD.table +
+    '?login=eq.' + encodeURIComponent(CLOUD.login) + '&select=rev,data&limit=1';
+  const r = await fetch(url, {headers: cloudHeaders(), cache: 'no-store'});
+  if(!r.ok) throw new Error('cloud ' + r.status);
+  const rows = await r.json();
+  return Array.isArray(rows) && rows[0] ? rows[0] : null;
+}
+async function cloudPut(){
+  if(!state.rev) state.rev = Date.now();
+  const body = JSON.stringify([{
+    login: CLOUD.login,
+    rev: state.rev,
+    data: state,
+    updated_at: new Date().toISOString()
+  }]);
+  const r = await fetch(CLOUD.url + '/rest/v1/' + CLOUD.table + '?on_conflict=login', {
+    method: 'POST',
+    headers: cloudHeaders({Prefer: 'resolution=merge-duplicates,return=minimal'}),
+    body
+  });
+  if(!r.ok) throw new Error('cloud ' + r.status);
+}
+
+function cloudLabel(){
+  if(!CLOUD_ON()) return 'облако не подключено';
+  if(cloudState === 'busy') return 'синхронизация…';
+  if(cloudState === 'err') return 'нет связи — сохранено на устройстве';
+  if(cloudState === 'ok' && cloudAt){
+    const d = new Date(cloudAt);
+    return 'сохранено в облаке в ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
   }
-  h1 = Math.imul(h1 ^ (h1>>>16), 2246822507) ^ Math.imul(h2 ^ (h2>>>13), 3266489909);
-  h2 = Math.imul(h2 ^ (h2>>>16), 2246822507) ^ Math.imul(h1 ^ (h1>>>13), 3266489909);
-  return (h2>>>0).toString(16) + (h1>>>0).toString(16);
+  return 'ожидание синхронизации';
+}
+function paintCloud(){
+  const el = $('#cloudLine');
+  if(el) el.textContent = cloudLabel();
+}
+function queueCloudSync(){
+  if(!CLOUD_ON() || currentUser !== CLOUD.login) return;
+  clearTimeout(cloudTimer);
+  cloudState = 'busy'; paintCloud();
+  cloudTimer = setTimeout(() => { syncNow(); }, 1200);
+}
+
+function stateIsEmpty(s){
+  return (!s || !s.sessions || !s.sessions.length) && (!s || !s.days || !Object.keys(s.days).length);
+}
+/* Перед тем как заменить локальные данные облачными, кладём копию
+   в запас: в настройках её можно вернуть, если что-то пошло не так. */
+function snapshotLocal(){
+  try{
+    const keys = [];
+    for(let i=0;i<localStorage.length;i++){
+      const k = localStorage.key(i);
+      if(k && k.indexOf('form_bak_') === 0) keys.push(k);
+    }
+    keys.sort();
+    while(keys.length >= 3){ localStorage.removeItem(keys.shift()); }
+    lsSet('form_bak_' + Date.now(), JSON.stringify(state));
+  }catch(e){}
+}
+
+async function syncNow(initial){
+  if(!CLOUD_ON() || currentUser !== CLOUD.login){ cloudState = 'off'; paintCloud(); return; }
+  if(cloudBusy) return;
+  cloudBusy = true; cloudState = 'busy'; paintCloud();
+  try{
+    const remote = await cloudGet();
+    const rRev = (remote && remote.rev) || 0;
+    const lRev = state.rev || 0;
+    if(remote && remote.data && rRev > lRev){
+      if(!stateIsEmpty(state)) snapshotLocal();
+      state = normalize(remote.data);
+      state.rev = rRev;
+      saveLocal0();
+      render();
+      if(initial) toast('Прогресс загружен из облака');
+    } else if(!remote || !remote.data){
+      // В облаке ещё пусто. Пустое состояние с нового устройства
+      // не отправляем — иначе оно затрёт прогресс с другого телефона.
+      if(!stateIsEmpty(state)){
+        if(!state.rev) state.rev = Date.now();
+        await cloudPut();
+        saveLocal0();
+      }
+    } else if(lRev > rRev){
+      if(!state.rev) state.rev = Date.now();
+      await cloudPut();
+      saveLocal0();
+    } else {
+      state.rev = rRev || state.rev;
+      saveLocal0();
+    }
+    cloudState = 'ok'; cloudAt = Date.now();
+  }catch(e){
+    cloudState = 'err';
+  }
+  cloudBusy = false;
+  paintCloud();
+}
+function saveLocal0(){
+  if(!currentUser) return;
+  lsSet(userKey(currentUser), JSON.stringify(state));
 }
 
 function pad(n){ return String(n).padStart(2,'0'); }
@@ -1906,9 +2008,10 @@ function settingsSheet(){
     <p class="sub">Аккаунт, время тренировок, КБЖУ и напоминания.</p>
 
     <div class="alogout">
-      <div class="uname">@${escapeHtml(currentUser || '—')}<span>прогресс сохраняется в аккаунт</span></div>
+      <div class="uname">@${escapeHtml(currentUser || '—')}<span id="cloudLine">${cloudLabel()}</span></div>
       <button class="btn btn-ghost btn-sm" data-act="logout">Выйти</button>
     </div>
+    <button class="btn btn-ghost" data-act="sync-now" style="margin-bottom:8px">Синхронизировать сейчас</button>
 
     <div class="flabel">Время тренировок</div>
     <div class="grid2">
@@ -1962,89 +2065,83 @@ function settingsSheet(){
 }
 
 /* ============================================================
-   AUTH
+   AUTH — один логин, без регистрации
    ============================================================ */
-let authMode = 'login';
+const OWNER_LOGIN = 'vargonik';
 
 function showAuth(){
   const el = $('#auth');
   el.classList.add('on');
-  $$('.seg-btn').forEach(b => b.classList.toggle('on', b.dataset.mode === authMode));
-  $('#authBtn').textContent = authMode === 'login' ? 'Войти' : 'Создать аккаунт';
-  $('#authTitle').textContent = authMode === 'login' ? 'Твой прогресс' : 'Новый аккаунт';
-  $('#authLead').textContent = authMode === 'login'
-    ? 'Войди, чтобы тренировки, веса и питание сохранялись под твоим логином.'
-    : 'Придумай логин и пароль — больше ничего не нужно.';
+  el.scrollTop = 0;
   $('#aErr').textContent = '';
   $('#aLogin').value = '';
-  $('#aPass').value = '';
 }
 function hideAuth(){ $('#auth').classList.remove('on'); }
 
-async function doAuth(){
+/* Если под vargonik прогресса ещё нет — забираем самый полный
+   из старых локальных аккаунтов, чтобы ничего не потерялось. */
+function seedLegacyState(){
+  let best = null, bestScore = -1;
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const k = localStorage.key(i);
+      if(!k || k.indexOf('form_data_') !== 0) continue;
+      const login = k.slice(10);
+      if(login === OWNER_LOGIN) continue;
+      try{
+        const s = normalize(JSON.parse(localStorage.getItem(k)));
+        const score = (s.sessions||[]).length * 1e9 +
+          Object.keys(s.days||{}).length * 1e6 +
+          ((s.rev || 0) % 1e6) / 1e6;
+        if(score > bestScore){ bestScore = score; best = s; }
+      }catch(e){}
+    }
+  }catch(e){}
+  if(!best){
+    try{ const legacy = lsGet(LS_KEY); if(legacy) best = normalize(JSON.parse(legacy)); }catch(e){}
+  }
+  return best || defaultState();
+}
+
+function loginAsOwner(){
+  const stored = lsGet(userKey(OWNER_LOGIN));
+  currentUser = OWNER_LOGIN;
+  if(stored){
+    state = loadStateFor(OWNER_LOGIN);
+  } else {
+    state = seedLegacyState();
+    saveLocal0();   // rev не трогаем: если в облаке есть свежее, оно победит
+  }
+  setSession(OWNER_LOGIN);
+  const users = getUsers();
+  users[OWNER_LOGIN] = users[OWNER_LOGIN] || {owner:true, created:Date.now()};
+  setUsers(users);
+  setAcct(OWNER_LOGIN, users[OWNER_LOGIN]);
+  hideAuth();
+  render();
+  scheduleReminder();
+  syncNow(true);
+}
+
+function doAuth(){
   const login = ($('#aLogin').value || '').trim().toLowerCase();
-  const pass = $('#aPass').value || '';
   const err = $('#aErr');
   err.textContent = '';
-  if(login.length < 3){ err.textContent = 'Логин — минимум 3 символа'; return; }
-  if(pass.length < 4){ err.textContent = 'Пароль — минимум 4 символа'; return; }
-  const users = getUsers();
-  if(authMode === 'reg'){
-    if(users[login]){ err.textContent = 'Этот логин уже занят — войди под ним'; return; }
-    const salt = Math.random().toString(36).slice(2,10);
-    const hash = await pwHash(pass, salt);
-    const rec = {salt, hash, created: Date.now()};
-    users[login] = rec;
-    setUsers(users);
-    setAcct(login, rec);
-
-    // если данные под этим логином уже есть (например, аккаунт потерялся,
-    // а прогресс остался) — подхватываем их, а не начинаем с нуля
-    let fresh = defaultState();
-    const existing = lsGet(userKey(login));
-    if(existing){
-      try{ fresh = normalize(JSON.parse(existing)); }catch(e){}
-    } else {
-      const legacy = lsGet(LS_KEY);
-      if(legacy){ try{ fresh = normalize(JSON.parse(legacy)); }catch(e){} }
-    }
-    currentUser = login;
-    state = fresh;
-    setSession(login);
-    save();
-    hideAuth();
-    render();
-    scheduleReminder();
-    toast('Аккаунт создан. Дальше всё сохраняется автоматически');
-  } else {
-    let u = users[login];
-    if(!u) u = getAcct(login);
-    if(!u){
-      err.textContent = 'Аккаунт не найден в этом браузере — создай новый с тем же логином, прогресс не потеряется';
-      return;
-    }
-    const hash = await pwHash(pass, u.salt);
-    if(hash !== u.hash){ err.textContent = 'Неверный пароль'; return; }
-    users[login] = u;
-    setUsers(users);
-    setAcct(login, u);
-    currentUser = login;
-    state = loadStateFor(login);
-    setSession(login);
-    hideAuth();
-    render();
-    scheduleReminder();
-    toast('С возвращением, ' + login);
-  }
+  if(!login){ err.textContent = 'Введи логин'; return; }
+  if(login !== OWNER_LOGIN){ err.textContent = 'Такого логина нет'; return; }
+  const first = !lsGet(userKey(OWNER_LOGIN));
+  loginAsOwner();
+  toast(first ? 'Готово. Прогресс теперь в облаке' : 'С возвращением');
 }
+
 function logout(){
   closeSheet();
   closeWorkout();
+  clearSession();
   currentUser = null;
   state = defaultState();
-  authMode = 'login';
   showAuth();
-  toast('Вышел из аккаунта. Войди снова — прогресс на месте');
+  toast('Вышел. Войди снова — прогресс на месте');
 }
 
 function exportBackup(){
@@ -2345,6 +2442,10 @@ document.addEventListener('click', e=>{
   }
   else if(act === 'zoom-photo'){ zoomPhoto(el.dataset.src); }
   else if(act === 'export-ics'){ exportICS(); }
+  else if(act === 'sync-now'){
+    syncNow();
+    setTimeout(() => toast(cloudState === 'ok' ? 'Синхронизировано с облаком' : cloudLabel()), 900);
+  }
   else if(act === 'subscribe-ics'){ subscribeCalendar(); }
   else if(act === 'install-help'){ installHelp(); }
   else if(act === 'toggle-remind'){
@@ -2364,10 +2465,6 @@ document.addEventListener('click', e=>{
   else if(act === 'remind-close'){ hideRemindBanner(); }
   else if(act === 'backup-save'){ exportBackup(); }
   else if(act === 'backup-load'){ $('#impFile').click(); }
-  else if(act === 'auth-mode'){
-    authMode = el.dataset.mode;
-    showAuth();
-  }
   else if(act === 'auth-submit'){ doAuth(); }
   else if(act === 'logout'){ logout(); }
   else if(act === 'reset-day'){
@@ -2405,19 +2502,21 @@ document.addEventListener('change', e=>{
 
 $('#backdrop').addEventListener('click', closeSheet);
 $('#lbx').addEventListener('click', e => e.currentTarget.classList.remove('on'));
+const loginInput = document.getElementById('aLogin');
+if(loginInput) loginInput.addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preventDefault(); doAuth(); } });
 document.addEventListener('change', e=>{
   if(e.target.id === 'impFile' && e.target.files && e.target.files[0]) importBackup(e.target.files[0]);
 });
 
 /* boot */
 (function boot(){
-  const sess = lsGet(SESSION_KEY) || cookieGet('form_session');
-  const users = getUsers();
-  if(sess && (users[sess] || getAcct(sess))){
-    currentUser = sess;
-    state = loadStateFor(sess);
-    setSession(sess);
+  const sess = (lsGet(SESSION_KEY) || cookieGet('form_session') || '').toLowerCase();
+  if(sess === OWNER_LOGIN){
+    currentUser = OWNER_LOGIN;
+    state = loadStateFor(OWNER_LOGIN);
+    setSession(OWNER_LOGIN);
     hideAuth();
+    syncNow(true);
   } else {
     showAuth();
     if(!storageWorks()){
