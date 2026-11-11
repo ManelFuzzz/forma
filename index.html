@@ -1447,8 +1447,9 @@ function sdWeekRange(n){
 }
 function sdCount(n){
   const w = SCHED.weeks[n];
-  return w ? Object.keys(w).reduce((a,k) => a + w[k].length, 0) : 0;
+  return w ? Object.keys(w).reduce((a,k) => a + sdPairs(w[k]), 0) : 0;
 }
+function sdPairs(items){ return new Set(items.map(it => it[0])).size; }
 
 function sdLessonRow(it){
   const [a,b] = sdTimeParts(it[0]);
@@ -1490,6 +1491,7 @@ function sdDayCard(date, kind){
   const week = sdWeekIndex(date), dow = sdDayNum(date);
   const inSem = week >= 1 && week <= SD_MAX;
   const items = inSem ? sdItems(week, dow) : [];
+  const pairs = sdPairs(items);
   return `<div class="daycard ${kind === 'today' ? 'today' : 'next'}">
     <div class="dc-head">
       <div>
@@ -1497,7 +1499,7 @@ function sdDayCard(date, kind){
         <b>${SD_DOW[dow-1] || 'Воскресенье'}</b>
         <span class="d">${sdDateLabel(date)}</span>
       </div>
-      <span class="dc-count">${items.length ? items.length + ' ' + sdDots(items.length) : 'нет пар'}</span>
+      <span class="dc-count">${pairs ? pairs + ' ' + sdDots(pairs) : 'нет пар'}</span>
     </div>
     ${items.length
       ? '<div class="lessons">' + items.map(sdLessonRow).join('') + '</div>'
