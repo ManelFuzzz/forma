@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#07080A">
+<meta name="robots" content="noindex, nofollow, noarchive">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -424,6 +425,7 @@ details .dbody li:last-child{margin-bottom:0}
 </div>
 
 <input type="file" id="impFile" accept=".json,application/json" style="display:none">
+<input type="file" id="aiFile" accept="image/*" style="display:none">
 
 <!-- Photo lightbox -->
 <div class="lbx" id="lbx"><span class="lbt">Закрыть</span><img id="lbxImg" alt="Техника упражнения"></div>
@@ -998,7 +1000,7 @@ function zoomPhoto(src){
 function defaultState(){
   return {
     tab:'training',
-    settings:{weekdayTime:'19:00', weekendTime:'11:00', sound:true, diagrams:true, remind:true},
+    settings:{weekdayTime:'19:00', weekendTime:'11:00', sound:true, diagrams:true, remind:true, bodyweight:74},
     targets:{...DEFAULT_TARGETS},
     days:{}, sessions:[], weights:{}, rev:0
   };
@@ -1324,7 +1326,17 @@ function viewTraining(){
     <div class="stat"><b>${last7}</b><span>за 7 дней</span></div>
     <div class="stat"><b>${state.sessions.length}</b><span>всего тренировок</span></div>
   </div>
-  ${lastSession ? `<div class="note" style="margin-top:8px">Последняя: <b>${lastSession.programName}</b> · ${lastSession.date.split('-').reverse().join('.')} · ${lastSession.minutes} мин · ${lastSession.sets} подходов${lastSession.volume ? ' · ' + Math.round(lastSession.volume) + ' кг объёма' : ''}</div>` : ''}
+  ${lastSession ? `<div class="note" style="margin-top:8px">Последняя: <b>${lastSession.programName}</b> · ${lastSession.date.split('-').reverse().join('.')} · ${lastSession.minutes} мин · ${lastSession.sets} подходов · ≈ ${kcalOf(lastSession)} ккал${lastSession.volume ? ' · ' + Math.round(lastSession.volume) + ' кг объёма' : ''}</div>` : ''}
+
+  ${state.sessions.length ? `<div class="sec-title">Тренировки</div>
+  <div class="sched">
+    ${state.sessions.slice(-6).reverse().map(s => `
+      <div class="srow">
+        <div class="sday">${s.date.split('-').reverse().slice(0,2).join('.')}</div>
+        <div class="smain"><b>${escapeHtml(s.programName)}</b><span>${s.minutes} мин · ${s.sets} подходов</span></div>
+        <div class="stime">≈ ${kcalOf(s)} ккал</div>
+      </div>`).join('')}
+  </div>` : ''}
 
   <div class="sec-title">Как расти</div>
   <div class="card">
@@ -1673,6 +1685,24 @@ function renderSched(){
 function r1(v){ return Math.round(v*10)/10; }
 function escapeHtml(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
+/* ---------- калории тренировки ----------
+   Оценка по MET: kcal = MET × 3.5 × вес / 200 × минуты.
+   MET зависит от плотности тренировки — сколько минут из общих
+   человек реально был под нагрузкой, а не стоял у снаряда. */
+function bodyKg(){
+  const v = +state.settings.bodyweight;
+  return v > 35 && v < 220 ? v : 74;
+}
+function kcalOf(s){
+  if(!s) return 0;
+  if(s.kcal > 0) return Math.round(s.kcal);
+  const minutes = Math.max(1, +s.minutes || 1);
+  const active = (s.log || []).reduce((a,l) => a + (+l.secs || 0), 0);
+  const density = Math.min(0.6, active / (minutes * 60));
+  const met = Math.min(8, 5.2 + 3 * density);
+  return Math.round(met * 3.5 * bodyKg() / 200 * minutes);
+}
+
 /* ============================================================
    WORKOUT ENGINE
    ============================================================ */
@@ -1804,18 +1834,21 @@ function endSet(auto){
     W.phase = 'idle';
     save();
     renderW(); scrollTop();
+    // и отдых между упражнениями тоже нужен: иначе следующее
+    // упражнение начинается с пульсом 150 и пустой головой
+    startRest(W.ex[W.i], W.ex[W.i].rest);
     return;
   }
   startRest(ex);
 }
 
-function startRest(prevEx){
+function startRest(prevEx, dur){
   const ex = W.ex[W.i] || prevEx;
-  const dur = Math.max(10, (prevEx && prevEx.rest) || (ex && ex.rest) || 60);
-  W.phase = 'rest'; W.restTotal = dur; W.restEnd = Date.now() + dur*1000;
+  const len = Math.max(10, dur || (prevEx && prevEx.rest) || (ex && ex.rest) || 60);
+  W.phase = 'rest'; W.restTotal = len; W.restEnd = Date.now() + len*1000;
   const nx = W.ex[W.i];
   $('#restNext').innerHTML = nx ? `Дальше: <b>${nx.name}</b> · подход ${W.s+1} из ${nx.sets}` : '';
-  $('#restNum').textContent = mmss(dur);
+  $('#restNum').textContent = mmss(len);
   $('#ringFg').style.strokeDashoffset = '0';
   $('#rest').classList.add('open');
   updateRest();
@@ -1870,17 +1903,20 @@ function renderFinish(){
   const minutes = Math.max(1, Math.round((Date.now() - W.startedAt)/60000));
   const volume = W.log.reduce((a,l)=>a + (l.weight||0)*l.reps, 0);
   const sets = W.log.length;
+  const kcal = kcalOf({minutes, log:W.log});
   const chest = W.log.some(l => ['chest-press','pec-deck','pushup'].includes(l.ex));
   $('#wkBody').innerHTML = `
     <div class="wcard" style="text-align:center;padding:28px 18px">
       <div style="font-size:40px;line-height:1">💪</div>
       <h2 style="margin-top:14px">Тренировка завершена</h2>
       <p class="small muted" style="margin:6px 0 0">${W.prog.name} · ${W.prog.focus}</p>
-      <div class="stats" style="margin-top:20px;text-align:left">
+      <div class="stats" style="margin-top:20px;text-align:left;grid-template-columns:1fr 1fr">
         <div class="stat"><b>${minutes}</b><span>минут</span></div>
         <div class="stat"><b>${sets}</b><span>подходов</span></div>
         <div class="stat"><b>${volume ? Math.round(volume) : '—'}</b><span>кг объёма</span></div>
+        <div class="stat"><b>≈ ${kcal}</b><span>ккал сожжено</span></div>
       </div>
+      <div class="small muted" style="margin-top:10px;text-align:left;font-size:11px;line-height:1.5">Калории — оценка по весу тела (${bodyKg()} кг) и времени под нагрузкой. Точнее любых часов не будет, но порядок верный.</div>
       ${chest ? `<div class="note" style="margin-top:14px;text-align:left">Грудь сегодня получила нагрузку. Завтра — белок и сон, мышцы растут именно там.</div>` : ''}
       <div class="note" style="margin-top:8px;text-align:left">Не забудь: 30–40 г белка в течение пары часов и 2–2,5 л воды за день.</div>
     </div>`;
@@ -1894,7 +1930,7 @@ function saveSession(){
   state.sessions.push({
     ts: Date.now(), date: dateKey(), programId: W.programId,
     programName: W.prog.name, minutes, sets: W.log.length,
-    volume, log: W.log
+    volume, kcal: kcalOf({minutes, log:W.log}), log: W.log
   });
   save();
   closeWorkout();
@@ -1968,7 +2004,13 @@ function foodSheet(){
   openSheet(`
     <div class="grab"></div>
     <h3>Добавить приём пищи</h3>
-    <p class="sub">Введи продукты и граммы — или ткни готовый вариант.</p>
+    <p class="sub">Сфотографируй тарелку — или введи продукты и граммы вручную.</p>
+    <button class="btn btn-lime" data-act="ai-photo">
+      <svg viewBox="0 0 24 24"><path d="M4 8h3l1.7-2.2h6.6L17 8h3v11H4z"/><circle cx="12" cy="13.4" r="3.3"/></svg>
+      Распознать по фото
+    </button>
+    <div class="note" id="aiStatus" style="display:none"></div>
+    <div class="flabel">Готовые варианты</div>
     <div class="chips">
       ${FOODS.map((f,i)=>`<button class="chipbtn" data-act="quick-food" data-i="${i}">${f.n}</button>`).join('')}
     </div>
@@ -1985,6 +2027,163 @@ function foodSheet(){
     <button class="btn btn-lime" style="margin-top:18px" data-act="save-food">Добавить</button>
     <button class="btn btn-ghost" style="margin-top:8px" data-act="close-sheet">Отмена</button>
   `);
+}
+
+/* ============================================================
+   ФОТО → КБЖУ
+   Бесплатный ключ Google AI Studio, хранится на устройстве.
+   ============================================================ */
+const AI_STORE = 'form_ai_key';
+const AI_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-flash-latest'];
+let aiReturnTo = 'settings';
+
+function aiKey(){ return String(lsGet(AI_STORE) || '').trim(); }
+function aiSetKey(k){ if(k) lsSet(AI_STORE, String(k).trim()); else { try{ localStorage.removeItem(AI_STORE); }catch(e){} } }
+
+const AI_PROMPT = `Ты нутрициолог. На фото — еда. Определи блюдо и оцени КБЖУ всей порции, которая видна.
+
+Правила:
+- Если на тарелке несколько продуктов — назови блюдо одним названием и посчитай сумму по всей порции.
+- Вес оценивай в граммах по размеру тарелки, приборов и порции. Это готовая еда, не сухие продукты.
+- Масло, соус, сахар, майонез, если их не видно, но они обычно есть — учитывай типичное количество и укажи это в note.
+- Все цифры — на всю порцию, а не на 100 грамм.
+- Название по-русски, коротко, до 40 символов.
+- note — одна короткая фраза о допущениях (что принял за вес, что не видно).`;
+
+const AI_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    name: { type: 'STRING' },
+    grams: { type: 'NUMBER' },
+    kcal: { type: 'NUMBER' },
+    protein: { type: 'NUMBER' },
+    fat: { type: 'NUMBER' },
+    carbs: { type: 'NUMBER' },
+    note: { type: 'STRING' }
+  },
+  required: ['name', 'grams', 'kcal', 'protein', 'fat', 'carbs']
+};
+
+function fileToJpeg(file, maxSide = 1000){
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try{
+        const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(img.width * scale));
+        c.height = Math.max(1, Math.round(img.height * scale));
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0, c.width, c.height);
+        const data = c.toDataURL('image/jpeg', 0.82).split(',')[1];
+        URL.revokeObjectURL(url);
+        resolve({ data, mime: 'image/jpeg', preview: 'data:image/jpeg;base64,' + data });
+      }catch(err){ URL.revokeObjectURL(url); reject(err); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('image')); };
+    img.src = url;
+  });
+}
+
+async function aiRecognize(file){
+  if(!aiKey()){ aiKeySheet('Сначала подключи бесплатный ключ — это один раз.', 'food'); return; }
+  const st = document.getElementById('aiStatus');
+  const say = (txt, cls) => {
+    if(!st) return;
+    st.style.display = '';
+    st.className = 'note' + (cls ? ' ' + cls : '');
+    st.innerHTML = txt;
+  };
+  say('Смотрю фото… обычно 3–8 секунд.');
+  let img;
+  try{ img = await fileToJpeg(file); }
+  catch(e){ say('Не получилось прочитать фото. Попробуй снять ещё раз или введи вручную.'); return; }
+
+  const body = {
+    contents: [{ role: 'user', parts: [{ text: AI_PROMPT }, { inline_data: { mime_type: img.mime, data: img.data } }] }],
+    generationConfig: { temperature: 0.2, responseMimeType: 'application/json', responseSchema: AI_SCHEMA }
+  };
+  let lastErr = '';
+  for(const model of AI_MODELS){
+    let r;
+    try{
+      r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(aiKey()), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+    }catch(e){ lastErr = 'net'; continue; }
+    const txt = await r.text();
+    if(r.ok){
+      try{
+        const j = JSON.parse(txt);
+        const raw = j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts && j.candidates[0].content.parts[0] && j.candidates[0].content.parts[0].text;
+        if(!raw) throw new Error('empty');
+        const data = JSON.parse(String(raw).replace(/^```(?:json)?/i, '').replace(/```$/, '').trim());
+        fillFoodForm(data, img.preview);
+        return;
+      }catch(e){ lastErr = 'parse'; }
+    } else if(r.status === 400 && /API key not valid|API_KEY_INVALID/i.test(txt)){ lastErr = 'badkey'; break; }
+    else if(r.status === 429){ lastErr = 'limit'; break; }
+    else if(r.status === 403){ lastErr = 'denied'; break; }
+    else { lastErr = 'http' + r.status; }
+  }
+  const msg = lastErr === 'badkey' ? 'Ключ не подошёл. Проверь его в настройках.'
+    : lastErr === 'limit' ? 'Бесплатный лимит запросов исчерпан. Попробуй позже или введи вручную.'
+    : lastErr === 'denied' ? 'Google не пустил запрос с этим ключом. Проверь ключ в настройках.'
+    : lastErr === 'net' ? 'Нет связи с сервисом распознавания. Проверь интернет.'
+    : 'Не получилось распознать. Попробуй другое фото или введи вручную.';
+  say(msg);
+}
+
+function fillFoodForm(r, preview){
+  const set = (id, v) => { const el = document.getElementById(id); if(el) el.value = v; };
+  const name = String(r.name || 'Блюдо').slice(0, 60);
+  set('fName', name);
+  set('fK', Math.round(+r.kcal || 0));
+  set('fP', r1(+r.protein || 0));
+  set('fF', r1(+r.fat || 0));
+  set('fC', r1(+r.carbs || 0));
+  const st = document.getElementById('aiStatus');
+  if(st){
+    st.style.display = '';
+    st.className = 'note';
+    st.innerHTML = `<b>${escapeHtml(name)}</b>${r.grams ? ' · ≈ ' + Math.round(r.grams) + ' г' : ''}<br>
+      ${r.note ? escapeHtml(r.note) + '<br>' : ''}
+      <span class="muted">Оценка по фото — проверь цифры и поправь, если знаешь точнее.</span>
+      ${preview ? `<img src="${preview}" alt="Фото блюда" style="width:100%;border-radius:12px;margin-top:10px;display:block">` : ''}`;
+    st.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function aiKeySheet(msg, from){
+  aiReturnTo = from || 'settings';
+  const has = !!aiKey();
+  openSheet(`
+    <div class="grab"></div>
+    <h3>Фото → КБЖУ</h3>
+    <p class="sub">${msg ? escapeHtml(msg) + ' ' : ''}Нужен бесплатный ключ Google AI Studio. Вставляется один раз, дальше всё работает само.</p>
+    <div class="note" style="margin-top:0">
+      <b>1.</b> Открой aistudio.google.com/apikey и войди своим Google-аккаунтом.<br>
+      <b>2.</b> Нажми <b>Create API key</b> и скопируй ключ — он начинается на AIza…<br>
+      <b>3.</b> Вставь его в поле ниже.
+    </div>
+    <div class="flabel">Ключ</div>
+    <input class="inp" id="aiKeyIn" placeholder="AIza…" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" value="${has ? escapeHtml(aiKey()) : ''}">
+    <button class="btn btn-lime" style="margin-top:12px" data-act="ai-key-save">Сохранить</button>
+    ${has ? `<button class="btn btn-ghost" style="margin-top:8px" data-act="ai-key-del">Удалить ключ</button>` : ''}
+    <a class="btn btn-ghost" style="margin-top:8px;text-decoration:none" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Открыть Google AI Studio</a>
+    <button class="btn btn-ghost" style="margin-top:8px" data-act="close-sheet">Готово</button>
+    <p class="small muted" style="margin-top:14px;line-height:1.55">Ключ хранится только в этом браузере и в облако не уходит. Лимитов бесплатного тарифа хватает с запасом на личное использование.</p>
+  `);
+}
+
+function aiKeySave(){
+  const v = ($('#aiKeyIn').value || '').trim();
+  if(v.length < 20){ toast('Это не похоже на ключ — он длинный, начинается на AIza'); return; }
+  aiSetKey(v);
+  closeSheet();
+  toast('Ключ сохранён — теперь работает фото');
+  if(aiReturnTo === 'food') foodSheet(); else settingsSheet();
 }
 
 function saveFood(){
@@ -2033,6 +2232,10 @@ function settingsSheet(){
       <div><input class="inp" id="tC" inputmode="numeric" value="${t.c}"><div class="small muted" style="text-align:center;margin-top:4px;font-size:10px">углев.</div></div>
     </div>
 
+    <div class="flabel">Вес тела</div>
+    <input class="inp" id="sBW" inputmode="decimal" value="${s.bodyweight || 74}" style="max-width:150px">
+    <div class="small muted" style="margin-top:6px;font-size:11px">кг — по нему считаются сожжённые калории</div>
+
     <div class="switch" style="margin-top:16px">
       <div class="lb">Звук таймера<span>Сигнал в конце подхода и отдыха</span></div>
       <button class="tg ${s.sound?'on':''}" data-act="toggle-sound"></button>
@@ -2054,6 +2257,10 @@ function settingsSheet(){
     <div class="flabel">Приложение на iPhone</div>
     <button class="btn btn-ghost" data-act="install-help" style="margin-bottom:8px">Как поставить на главный экран</button>
     <div class="note">С иконки на главном экране сайт открывается без адресной строки, на весь экран, и вход сохраняется навсегда.</div>
+
+    <div class="flabel">Фото → КБЖУ</div>
+    <button class="btn btn-ghost" data-act="ai-key" style="margin-bottom:8px">${aiKey() ? 'Ключ подключён — изменить' : 'Подключить распознавание по фото'}</button>
+    <div class="note" style="margin-top:0">Распознавание еды по фото работает на бесплатном ключе Google AI Studio. Ключ хранится только на этом устройстве и в облако не попадает.</div>
 
     <div class="flabel">Данные</div>
     <button class="btn btn-ghost" data-act="backup-save" style="margin-bottom:8px">Скачать резервную копию</button>
@@ -2395,6 +2602,19 @@ document.addEventListener('click', e=>{
   }
   else if(act === 'save-session'){ saveSession(); }
   else if(act === 'add-food'){ foodSheet(); }
+  else if(act === 'ai-photo'){
+    if(!aiKey()){ aiKeySheet('Сначала подключи бесплатный ключ — это один раз.', 'food'); return; }
+    const f = document.getElementById('aiFile');
+    if(f) f.click();
+  }
+  else if(act === 'ai-key'){ aiKeySheet('', 'settings'); }
+  else if(act === 'ai-key-save'){ aiKeySave(); }
+  else if(act === 'ai-key-del'){
+    aiSetKey('');
+    closeSheet();
+    toast('Ключ удалён');
+    if(aiReturnTo === 'food') foodSheet(); else settingsSheet();
+  }
   else if(act === 'quick-food'){
     const f = FOODS[+el.dataset.i];
     if(!f) return;
@@ -2498,6 +2718,11 @@ document.addEventListener('change', e=>{
     state.targets[map[id]] = Math.max(0, +e.target.value || 0);
     save(); render();
   }
+  if(id === 'sBW'){
+    const v = +e.target.value;
+    state.settings.bodyweight = (v > 35 && v < 220) ? v : 74;
+    save(); render(); toast('Вес сохранён');
+  }
 });
 
 $('#backdrop').addEventListener('click', closeSheet);
@@ -2506,6 +2731,11 @@ const loginInput = document.getElementById('aLogin');
 if(loginInput) loginInput.addEventListener('keydown', e => { if(e.key === 'Enter'){ e.preventDefault(); doAuth(); } });
 document.addEventListener('change', e=>{
   if(e.target.id === 'impFile' && e.target.files && e.target.files[0]) importBackup(e.target.files[0]);
+  if(e.target.id === 'aiFile' && e.target.files && e.target.files[0]){
+    const file = e.target.files[0];
+    e.target.value = '';
+    aiRecognize(file);
+  }
 });
 
 /* boot */
