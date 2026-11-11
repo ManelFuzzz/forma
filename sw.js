@@ -1,5 +1,5 @@
 /* Форма — офлайн-кэш */
-const V = 'forma-v3';
+const V = 'forma-v4';
 const SHELL = ['./', './index.html', './manifest.json', './icon-192.png', './icon-180.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
