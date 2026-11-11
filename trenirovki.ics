@@ -1,0 +1,78 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Forma//Training//RU
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
+X-WR-CALNAME:Тренировки
+X-WR-CALDESC:Силовые тренировки 4 раза в неделю
+REFRESH-INTERVAL;VALUE=DURATION:P1D
+X-PUBLISHED-TTL:P1D
+BEGIN:VEVENT
+UID:upperA-MO@forma
+DTSTAMP:20261111T092955Z
+DTSTART:20260105T190000
+DTEND:20260105T200000
+RRULE:FREQ=WEEKLY;BYDAY=MO
+SUMMARY:Тренировка · Верх тела A
+DESCRIPTION:1. Жим от груди в тренажёре\n2. Тяга верхнего блока к груди\n3. Отжимания от пола\n4. Сведение рук (бабочка)\n5. Тяга нижнего блока к поясу\n6. Разгибание рук на блоке\n7. Планка
+LOCATION:Дом
+STATUS:CONFIRMED
+TRANSP:OPAQUE
+BEGIN:VALARM
+TRIGGER:-PT15M
+ACTION:DISPLAY
+DESCRIPTION:Тренировка через 15 минут
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:lowerA-WE@forma
+DTSTAMP:20261111T092955Z
+DTSTART:20260107T190000
+DTEND:20260107T200000
+RRULE:FREQ=WEEKLY;BYDAY=WE
+SUMMARY:Тренировка · Низ тела A
+DESCRIPTION:1. Приседания с гирей (гоблет)\n2. Выпады назад на месте\n3. Разгибание ног в тренажёре\n4. Ягодичный мостик\n5. Подъёмы на носки\n6. Скручивания на пресс\n7. Ходьба на дорожке
+LOCATION:Дом
+STATUS:CONFIRMED
+TRANSP:OPAQUE
+BEGIN:VALARM
+TRIGGER:-PT15M
+ACTION:DISPLAY
+DESCRIPTION:Тренировка через 15 минут
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:upperB-FR@forma
+DTSTAMP:20261111T092955Z
+DTSTART:20260109T190000
+DTEND:20260109T200000
+RRULE:FREQ=WEEKLY;BYDAY=FR
+SUMMARY:Тренировка · Верх тела B
+DESCRIPTION:1. Жим от груди в тренажёре\n2. Подтягивания на турнике\n3. Тяга верхнего блока обратным хватом\n4. Жим гири вверх стоя\n5. Сведение рук (бабочка)\n6. Подъём на бицепс на скамье\n7. Боковая планка
+LOCATION:Дом
+STATUS:CONFIRMED
+TRANSP:OPAQUE
+BEGIN:VALARM
+TRIGGER:-PT15M
+ACTION:DISPLAY
+DESCRIPTION:Тренировка через 15 минут
+END:VALARM
+END:VEVENT
+BEGIN:VEVENT
+UID:lowerB-SU@forma
+DTSTAMP:20261111T092955Z
+DTSTART:20260104T110000
+DTEND:20260104T120000
+RRULE:FREQ=WEEKLY;BYDAY=SU
+SUMMARY:Тренировка · Низ тела B
+DESCRIPTION:1. Приседания с паузой\n2. Румынская тяга с гирей\n3. Разгибание ног в тренажёре\n4. Болгарский сплит-присед\n5. Подъёмы на носки\n6. Велосипед\n7. Ходьба на дорожке
+LOCATION:Дом
+STATUS:CONFIRMED
+TRANSP:OPAQUE
+BEGIN:VALARM
+TRIGGER:-PT15M
+ACTION:DISPLAY
+DESCRIPTION:Тренировка через 15 минут
+END:VALARM
+END:VEVENT
+END:VCALENDAR
